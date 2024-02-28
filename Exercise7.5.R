@@ -44,6 +44,8 @@ impute_B <- function(yA, theta_A, theta_B, rho, var_A, var_B) {
   return(imputed_B)
 }
 
+
+
 #Calculating imputed values 
 
 yA_imputed <- impute_A(yB, theta_A, theta_B, var_A, var_B, rho)
@@ -67,55 +69,64 @@ t.test(yA,yB,paired = TRUE)
 #Gibbs sampling using Jeffrey's prior
 #First must calculate the parameters for each of the posterior distributions for theta and sigma^2
 
-#For theta parameters
+mu0<-c ( 50 , 50 )
+L0<-matrix (c(625, 312.5 , 312.5 , 625 ), nrow=2, ncol =2)
+nu0<-4
+S0<-matrix(c(625 , 312.5 , 312.5 , 625) , nrow=2, ncol =2)
 
-ybar_A = (1/length(yA))*sum(yA)
-ybar_B = (1/length(yB))*sum(yB)
+Y <- matrix(nrow=length(yA),ncol=2)
 
-sigma2_A = 1/var_A
-sigma2_B = 1/var_B 
+Y[,1] = yA
+Y[,2] = yB
 
-#For 1/sigma^2 parameters
-
-shape_A = (length(yA)-1)/2
-shape_B = (length(yB)-1)/2
-
-rate_A = (1/2)*sum((yA-ybar_A)^2)
-rate_B = (1/2)*sum((yB-ybar_B)^2)
+library(MASS) # For rmvnorm and rwish functions
+library(MCMCpack)
+library(abind)
 
 
-### starting values
-S<-10000
-PHI<-matrix ( nrow=S , ncol =4)
-PHI[1 ,] <-phi<-c (theta_A,theta_B,var_A,var_B )
-###
-### Gibbs  sampling
+# Define prior parameters
+mu0 <- rep(0, ncol(Y))  # Prior mean
+L0 <- diag(ncol(Y))     # Prior precision matrix
+S0 <- diag(ncol(Y))     # Prior scale matrix
+nu0 <- ncol(Y)          # Degrees of freedom for the Wishart distribution
+
+n <- dim(Y)[1]
+ybar <- colMeans(Y)
+Sigma <- cov(Y)
+THETA <- SIGMA <- NULL
+
 set.seed(1)
-for ( s in 2:S ) {
-  #generate a new theta value from its full conditional
+for (s in 1:5000) {
+  # Update theta
+  Ln <- solve(solve(L0) + n * solve(Sigma))
+  mun <- Ln %*% (solve(L0) %*% mu0 + n * solve(Sigma) %*% ybar)
+  theta <- rmvnorm(1, mun, Ln)
   
-  phi[1]<- rnorm(1,ybar_A,sigma2_A)
-
-  phi[2]<- rnorm(1,ybar_B,sigma2_B)
+  # Update Sigma
+  Sn <- S0 + t(Y - matrix(theta, nrow = n, ncol = length(theta))) %*% (Y - matrix(theta, nrow = n, ncol = length(theta)))
+  Sigma <- rwish(nu0 + n, Sn)
   
- 
-  #generate a new 1/sigmaˆ2 value from its full conditional
-
-  phi[3]<-rgamma(1,shape_A,rate_A)
-  
-  phi[4]<-rgamma(1,shape_B,rate_B)
- 
-PHI[s,]<-phi
+  # Save results
+  THETA <- rbind(THETA, theta)
+  SIGMA <- abind(SIGMA, Sigma, along = 3)
 }
 
-#Calculating posterior mean
+# Extract samples of theta_A and theta_B
+theta_A_samples <- THETA[1, ]
+theta_B_samples <- THETA[2, ]
 
-theta_minus = PHI[,1]-PHI[,2]
+# Compute the differences between corresponding samples of theta_A and theta_B
+theta_diff <- theta_A_samples - theta_B_samples
 
-post_mean_minus = mean(theta_minus)
+# Compute posterior mean for theta_A - theta_B
+posterior_mean <- mean(theta_diff)
 
-#Finding 95% confidence interval, since we know that the difference in the thetas will be normal
+# Compute 95% posterior confidence interval for theta_A - theta_B
+posterior_ci <- quantile(theta_diff, c(0.025, 0.975))
 
-t.test(PHI[,1],PHI[,2],paired=TRUE)
+# Print results
+cat("Posterior mean for theta_A - theta_B:\n")
+print(posterior_mean)
 
-
+cat("\n95% posterior confidence interval for theta_A - theta_B:\n")
+print(posterior_ci)
